@@ -3,6 +3,10 @@ from __future__ import absolute_import, division, print_function
 from trakt.core.helpers import dictfilter
 from trakt.interfaces.base import Interface, authenticated, application
 
+import logging
+
+log = logging.getLogger(__name__)
+
 
 class ScrobbleInterface(Interface):
     path = 'scrobble'
@@ -130,6 +134,20 @@ class ScrobbleInterface(Interface):
                 'validate_token'
             ])
         )
+
+        if action == 'stop' and response is not None:
+            # Duplicate scrobble, treat as success
+            if response.status_code == 409:
+                log.info('Duplicate scrobble detected (409), item was already scrobbled')
+                try:
+                    return response.json()
+                except Exception:
+                    return {'action': 'scrobble', 'progress': progress, 'duplicate': True}
+
+            # Progress too low for Trakt to accept, not a real error
+            if response.status_code == 422:
+                log.info('Scrobble ignored by Trakt (422), progress too low (%.1f%%)', progress)
+                return None
 
         return self.get_data(response, **kwargs)
 

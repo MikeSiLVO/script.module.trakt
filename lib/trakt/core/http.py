@@ -30,6 +30,9 @@ log = logging.getLogger(__name__)
 
 
 class HttpClient(object):
+    # Trakt API: POST/PUT/DELETE limited to 1 call per second
+    _WRITE_METHODS = {'POST', 'PUT', 'DELETE'}
+
     def __init__(self, client, adapter_kwargs=None, keep_alive=True):
         self.client = client
 
@@ -45,6 +48,10 @@ class HttpClient(object):
 
         self._oauth_refreshing = KeyLock()
         self._oauth_validate_lock = RLock()
+
+        # POST rate limiting: track last write request timestamp
+        self._last_write_time = 0
+        self._write_lock = RLock()
 
         # Build requests session
         self.rebuild()
@@ -120,7 +127,24 @@ class HttpClient(object):
         # Send request
         return self.send(prepared)
 
+    def _throttle_write(self, method):
+        """Enforce 1 call/sec for POST/PUT/DELETE per Trakt API rate limits."""
+        if method not in self._WRITE_METHODS:
+            return
+
+        with self._write_lock:
+            now = time.time()
+            elapsed = now - self._last_write_time
+            if elapsed < 1.0:
+                wait = 1.0 - elapsed
+                log.debug('Rate throttle: waiting %.2fs before %s request', wait, method)
+                time.sleep(wait)
+            self._last_write_time = time.time()
+
     def send(self, request):
+        # Enforce POST/PUT/DELETE rate limit (1 call per second)
+        self._throttle_write(request.method)
+
         # Retrieve http configuration
         retry = self.client.configuration.get('http.retry', DEFAULT_HTTP_RETRY)
         max_retries = self.client.configuration.get('http.max_retries', DEFAULT_HTTP_MAX_RETRIES)
@@ -151,6 +175,25 @@ class HttpClient(object):
                 log.warning('Encountered socket.gaierror (code: 8)')
 
                 response = self.rebuild().send(request, timeout=timeout)
+
+            # Handle 429 Rate Limit - always retry with Retry-After regardless of retry setting
+            if not exc_info and response is not None and response.status_code == 429:
+                retry_after = None
+                try:
+                    retry_after = int(response.headers.get('Retry-After', 10))
+                except (ValueError, TypeError):
+                    retry_after = 10
+
+                if i < max_retries:
+                    log.warning(
+                        'Rate limit exceeded (429), waiting %s seconds (Retry-After)',
+                        retry_after
+                    )
+                    time.sleep(retry_after)
+                    continue
+                else:
+                    log.warning('Rate limit exceeded (429), no retries remaining')
+                    break
 
             # Retry requests on exceptions or 5xx errors (when enabled)
             if not retry or (not exc_info and response.status_code < 500):

@@ -11,7 +11,10 @@ ERRORS = {
     405: ("Method Not Found",       "Method doesn't exist"),
     409: ("Conflict",               "Resource already created"),
     412: ("Precondition Failed",    "Use application/json content type"),
+    420: ("Account Limit Exceeded", "List count, item count, etc"),
     422: ("Unprocessible Entity",   "Validation error"),
+    423: ("Locked User Account",    "Have the user contact support"),
+    426: ("VIP Only",               "User must upgrade to VIP"),
     429: ("Rate Limit Exceeded",    "Rate limit exceeded"),
 
     500: ("Server Error",           "Server error"),
