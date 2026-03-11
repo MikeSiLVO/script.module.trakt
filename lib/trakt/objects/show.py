@@ -240,6 +240,9 @@ class Show(Media):
         if self.aired_episodes:
             result['aired_episodes'] = self.aired_episodes
 
+        if self.reset_at:
+            result['reset_at'] = to_iso8601_datetime(self.reset_at)
+
         return result
 
     def _update(self, info=None, **kwargs):
